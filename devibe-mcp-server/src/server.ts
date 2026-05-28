@@ -15,6 +15,7 @@ import { logger } from "./utils/logger.js";
 import { toErrorPayload } from "./utils/errors.js";
 import { pingDb } from "./db/client.js";
 import { isAiConfigured } from "./services/ai.js";
+import { isClaudeConfigured } from "./services/claude.js";
 import { isGithubConfigured } from "./services/github.js";
 import { isQueueConfigured, enqueuePipeline } from "./queues/index.js";
 
@@ -32,6 +33,7 @@ app.get("/health", async (c) => {
     version: "1.0.0",
     checks: {
       ai: isAiConfigured(),
+      claude: isClaudeConfigured(),
       github: isGithubConfigured(),
       queue: isQueueConfigured(),
       database: await pingDb(),

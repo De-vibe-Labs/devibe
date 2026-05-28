@@ -54,6 +54,7 @@ devibe-mcp-server/
 | `generate_app_architecture` | Frontend, backend, DB schema, API structure, auth, deployment plan, security |
 | `generate_pages_and_screens` | All screens for websites, mobile, dashboards, SaaS, AI, blockchain apps |
 | `generate_code_tasks` | Developer-ready tasks: title, description, priority, stack, files, acceptance criteria |
+| `generate_mobile_app` | Generate a runnable mobile app codebase (Claude, cost-tiered: Haiku→Sonnet→Opus) |
 | `review_codebase` | Quality, security, performance, structure, missing features, deploy readiness |
 | `create_github_issues` | Turns tasks into GitHub issues |
 | `match_developer` | Routes work to freelancers / dev houses by skills, budget, rating, availability |
@@ -65,6 +66,38 @@ devibe-mcp-server/
 Product · Design · Frontend · Backend · Mobile · AI · Blockchain · QA · Deployment · Handoff.
 Each agent owns a subset of tools and carries a system prompt used when driving AI generation.
 See the routing map at runtime: `GET /routing` or the MCP resource `devibe://routing`.
+
+## Mobile app generation (cost-tiered Claude)
+
+`generate_mobile_app` builds a runnable mobile app codebase (React Native + Expo by default;
+Flutter / iOS-Swift / Android-Kotlin also accepted) using Claude with **cost-tiered escalation**.
+The lesser models are tried first to keep cost down, escalating only when needed:
+
+```
+Haiku 4.5  ──fails validation/errors──▶  Sonnet 4.6  ──▶  Opus 4.7
+(cheapest, tried first)                                  (most capable)
+```
+
+Each tier returns structured JSON (file list with real code) via Claude structured outputs;
+if a cheaper tier's output doesn't validate, the next tier is attempted. The response reports
+which `modelTier`/`model` produced the result and the full `escalation.attempts` trail. Set
+`startTier` (`haiku` | `sonnet` | `opus`) to raise the floor. Requires `ANTHROPIC_API_KEY`;
+without it the tool returns a deterministic Expo scaffold so it stays usable offline / in CI.
+
+Example arguments:
+
+```jsonc
+{
+  "name": "generate_mobile_app",
+  "arguments": {
+    "appName": "ZenFlow",
+    "description": "A breathing tracker with streak tracking and reminders",
+    "platform": "react_native_expo",
+    "screens": ["Home", "Breathe", "Stats", "Settings"],
+    "startTier": "haiku"
+  }
+}
+```
 
 ## Getting started
 
@@ -184,7 +217,8 @@ See [`.env.example`](./.env.example). Key variables:
 - `CLERK_JWKS_URL` / `CLERK_ISSUER` or `SUPABASE_JWKS_URL` / `SUPABASE_JWT_ISSUER` — JWT auth.
 - `DATABASE_URL` — PostgreSQL connection string.
 - `REDIS_URL` — Redis connection for BullMQ.
-- `GEMINI_API_KEY`, `GEMINI_MODEL` — AI generation.
+- `GEMINI_API_KEY`, `GEMINI_MODEL` — AI generation for planning tools.
+- `ANTHROPIC_API_KEY` — Claude generation for `generate_mobile_app` (cost-tiered Haiku→Sonnet→Opus).
 - `GITHUB_TOKEN` — GitHub issue creation.
 - `STRIPE_SECRET_KEY` — marketplace escrow.
 - `VERCEL_TOKEN` / `RAILWAY_TOKEN` / `FLY_API_TOKEN` — deployment providers.

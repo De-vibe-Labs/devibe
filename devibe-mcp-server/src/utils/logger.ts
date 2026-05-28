@@ -14,6 +14,7 @@ export const logger = pino({
       "*.token",
       "*.secret",
       "GEMINI_API_KEY",
+      "ANTHROPIC_API_KEY",
       "GITHUB_TOKEN",
       "STRIPE_SECRET_KEY",
     ],

@@ -9,6 +9,7 @@ const EXPECTED_TOOLS = [
   "generate_app_architecture",
   "generate_pages_and_screens",
   "generate_code_tasks",
+  "generate_mobile_app",
   "review_codebase",
   "create_github_issues",
   "match_developer",
@@ -17,7 +18,7 @@ const EXPECTED_TOOLS = [
 ];
 
 describe("tool registry", () => {
-  it("exposes all 10 core tools", () => {
+  it("exposes all core tools", () => {
     expect(TOOLS.map((t) => t.name).sort()).toEqual([...EXPECTED_TOOLS].sort());
   });
 
@@ -54,7 +55,7 @@ describe("router", () => {
   it("describes routing with agents, tools, and pipeline", () => {
     const r = describeRouting();
     expect(r.agents).toHaveLength(10);
-    expect(r.tools).toHaveLength(10);
+    expect(r.tools).toHaveLength(EXPECTED_TOOLS.length);
     expect(r.pipeline.length).toBeGreaterThan(0);
   });
 });

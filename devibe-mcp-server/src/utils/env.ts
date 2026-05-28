@@ -21,6 +21,8 @@ const schema = z.object({
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
 
+  ANTHROPIC_API_KEY: z.string().optional(),
+
   GITHUB_TOKEN: z.string().optional(),
   GITHUB_API_URL: z.string().default("https://api.github.com"),
 

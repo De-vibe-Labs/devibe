@@ -9,6 +9,7 @@ import { createGithubIssues } from "./create-github-issues.js";
 import { matchDeveloper } from "./match-developer.js";
 import { deploymentChecklist } from "./deployment-checklist.js";
 import { generateHandoffPack } from "./generate-handoff-pack.js";
+import { generateMobileApp } from "./generate-mobile-app.js";
 
 // Order roughly follows the lifecycle: idea -> plan -> build -> review -> ship.
 export const TOOLS: DevibeTool[] = [
@@ -17,6 +18,7 @@ export const TOOLS: DevibeTool[] = [
   generateAppArchitecture,
   generatePagesAndScreens,
   generateCodeTasks,
+  generateMobileApp,
   reviewCodebase,
   createGithubIssues,
   matchDeveloper,

@@ -1,0 +1,6 @@
+{
+  "name": "Devibe",
+  "description": "An AI-powered workspace combining prompt-to-app generation, MCP agent orchestration, and custom freelancer marketplace matching.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

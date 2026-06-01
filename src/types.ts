@@ -50,6 +50,22 @@ export interface MilestoneStep {
   status: 'pending' | 'in_progress' | 'completed';
 }
 
+export interface ChatMessage {
+  id: string;
+  sender: 'founder' | 'dev' | 'system';
+  authorName: string;
+  authorAvatar?: string;
+  text: string;
+  timestamp: string;
+}
+
+export interface JobValidation {
+  decision: 'approved' | 'changes_requested';
+  criteria: Array<{ stepId: string; title: string; passed: boolean }>;
+  notes: string;
+  validatedAt: string;
+}
+
 export interface MarketplaceJob {
   id: string;
   projectTitle: string;
@@ -58,6 +74,8 @@ export interface MarketplaceJob {
   milestonesCount: number;
   assignedDev?: string;
   steps?: MilestoneStep[];
+  messages?: ChatMessage[];
+  validation?: JobValidation;
 }
 
 export interface GeneratedAppSchema {

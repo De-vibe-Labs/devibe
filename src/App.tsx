@@ -22,6 +22,11 @@ export default function App() {
 
   // Navigation State: 'landing' or 'dashboard'
   const [currentMode, setCurrentMode] = useState<'landing' | 'dashboard'>('landing');
+
+  // Entry flow: chat-first (ChatGPT style) -> optional login -> full app.
+  const [appStage, setAppStage] = useState<'chat' | 'login' | 'app'>('chat');
+  const [entryPrompt, setEntryPrompt] = useState('');
+  const [pendingGeneration, setPendingGeneration] = useState(false);
   
   // Landing Sub-tab: 'home' | 'features' | 'marketplace' | 'templates' | 'docs' | 'blog' | 'pricing'
   const [landingTab, setLandingTab] = useState<'home' | 'features' | 'marketplace' | 'templates' | 'docs' | 'blog' | 'pricing'>('home');
@@ -602,29 +607,242 @@ export default function App() {
     return matchesFilter && matchesSearch;
   });
 
+  // ————————————————— ENTRY FLOW (chat-first, ChatGPT-style) —————————————————
+  const enterApp = (toBuilder: boolean) => {
+    setAppStage('app');
+    if (toBuilder) {
+      setCurrentMode('dashboard');
+      setDashTab('builder');
+    }
+  };
+
+  const submitEntryPrompt = (text?: string) => {
+    const value = (text ?? entryPrompt).trim();
+    if (!value) return;
+    setPromptInput(value);        // carry the prompt into the builder
+    setPendingGeneration(true);   // auto-run generation once inside the app
+    if (user) {
+      enterApp(true);
+    } else {
+      setAppStage('login');       // first the chat box, then the login page
+    }
+  };
+
+  const ENTRY_SUGGESTIONS = [
+    'A SaaS dashboard for tracking subscription churn with Stripe billing',
+    'A mobile app that turns voice notes into organized to-do lists',
+    'An NFT marketplace on Base with smart-contract escrow',
+    'An AI tool that drafts and scores cold sales emails',
+  ];
+
+  // Once authenticated from the login page, continue into the app.
+  useEffect(() => {
+    if (appStage === 'login' && user) {
+      enterApp(pendingGeneration);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, appStage]);
+
+  // Auto-run generation when we land in the builder with a pending prompt.
+  useEffect(() => {
+    if (
+      appStage === 'app' &&
+      pendingGeneration &&
+      currentMode === 'dashboard' &&
+      dashTab === 'builder' &&
+      promptInput.trim() &&
+      !isGenerating &&
+      !generatedApp
+    ) {
+      setPendingGeneration(false);
+      triggerProductionGeneration();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appStage, pendingGeneration, currentMode, dashTab, promptInput, isGenerating]);
+
+  // ————————————————— CHAT-FIRST SCREEN —————————————————
+  if (appStage === 'chat') {
+    return (
+      <div className="min-h-screen bg-[#0B0F19] text-slate-100 font-sans selection:bg-violet-600/30 selection:text-white flex flex-col">
+        <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-violet-600/10 rounded-full blur-[120px] pointer-events-none -translate-y-1/2"></div>
+        <div className="absolute bottom-0 right-10 w-[400px] h-[400px] bg-cyan-500/5 rounded-full blur-[100px] pointer-events-none"></div>
+
+        {/* Minimal top bar */}
+        <header className="relative z-10 px-4 h-16 flex items-center justify-between max-w-5xl mx-auto w-full">
+          <div className="flex items-center gap-2">
+            <DevibeLogo size={32} />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => enterApp(false)}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800/60 transition"
+            >
+              Explore platform
+            </button>
+            {user ? (
+              <button
+                onClick={() => enterApp(false)}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow active:scale-95 transition"
+              >
+                <span>Open Devibe</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            ) : (
+              <button
+                onClick={() => { setPendingGeneration(false); setAppStage('login'); }}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 border border-slate-700 bg-slate-800 hover:bg-slate-700 rounded-lg text-white transition active:scale-95"
+              >
+                <LogIn className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Sign in</span>
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* Centered composer */}
+        <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 pb-16">
+          <div className="w-full max-w-2xl text-center">
+            <div className="inline-flex items-center gap-2 px-3 py-1 bg-violet-500/10 border border-violet-500/20 rounded-full text-violet-300 text-xs font-mono mb-6">
+              <Sparkles className="w-3 h-3 text-cyan-400 animate-pulse" />
+              <span>Idea → product, in one prompt</span>
+            </div>
+            <h1 className="font-display text-3xl sm:text-5xl font-extrabold tracking-tight text-white mb-3 leading-tight">
+              What do you want to build?
+            </h1>
+            <p className="text-slate-400 text-sm sm:text-base mb-8">
+              Describe your app, website, AI tool, or blockchain product. Devibe's agents handle the rest.
+            </p>
+
+            <form
+              onSubmit={(e) => { e.preventDefault(); submitEntryPrompt(); }}
+              className="relative"
+            >
+              <div className="flex items-end gap-2 bg-[#0F1424] border border-slate-700 focus-within:border-violet-500/60 rounded-2xl p-2.5 shadow-2xl shadow-violet-950/20 transition">
+                <textarea
+                  value={entryPrompt}
+                  onChange={(e) => setEntryPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitEntryPrompt(); }
+                  }}
+                  rows={1}
+                  placeholder="Message Devibe…"
+                  className="flex-1 bg-transparent resize-none outline-none text-sm text-slate-100 placeholder-slate-500 px-2 py-2 max-h-40"
+                />
+                <button
+                  type="submit"
+                  disabled={!entryPrompt.trim()}
+                  className="shrink-0 w-9 h-9 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-white transition active:scale-95"
+                  aria-label="Send"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
+            </form>
+
+            <div className="flex flex-wrap justify-center gap-2 mt-5">
+              {ENTRY_SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => submitEntryPrompt(s)}
+                  className="text-left text-xs text-slate-300 bg-slate-800/50 hover:bg-slate-800 border border-slate-700/70 hover:border-violet-500/40 rounded-full px-3.5 py-1.5 transition"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+
+            <p className="text-[11px] text-slate-600 mt-8">
+              You'll be asked to sign in to generate and save your project.
+            </p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // ————————————————— LOGIN PAGE —————————————————
+  if (appStage === 'login') {
+    return (
+      <div className="min-h-screen bg-[#0B0F19] text-slate-100 font-sans selection:bg-violet-600/30 selection:text-white flex flex-col">
+        <div className="absolute top-0 left-1/3 w-[500px] h-[500px] bg-violet-600/10 rounded-full blur-[120px] pointer-events-none -translate-y-1/2"></div>
+
+        <header className="relative z-10 px-4 h-16 flex items-center justify-between max-w-5xl mx-auto w-full">
+          <button onClick={() => setAppStage('chat')} className="flex items-center gap-2">
+            <DevibeLogo size={32} />
+          </button>
+          <button
+            onClick={() => setAppStage('chat')}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800/60 transition"
+          >
+            ← Back to chat
+          </button>
+        </header>
+
+        <main className="relative z-10 flex-1 flex items-center justify-center px-4 pb-16">
+          <div className="w-full max-w-sm">
+            <div className="bg-[#0F1424] border border-slate-800 rounded-2xl p-7 shadow-2xl shadow-violet-950/20">
+              <div className="text-center mb-6">
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 mb-4">
+                  <Sparkles className="w-6 h-6 text-white" />
+                </div>
+                <h1 className="font-display text-xl font-bold text-white mb-1">Sign in to Devibe</h1>
+                <p className="text-slate-400 text-xs">
+                  {pendingGeneration
+                    ? 'Sign in to generate your project and keep your work.'
+                    : 'Sign in to access your projects, marketplace, and console.'}
+                </p>
+              </div>
+
+              {entryPrompt.trim() && pendingGeneration && (
+                <div className="mb-5 bg-slate-950/50 border border-slate-800 rounded-xl p-3 text-left">
+                  <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500 mb-1">
+                    <MessageSquare className="w-3 h-3 text-violet-400" />
+                    <span>YOUR PROMPT</span>
+                  </div>
+                  <p className="text-xs text-slate-300 line-clamp-3">{entryPrompt}</p>
+                </div>
+              )}
+
+              <button
+                onClick={loginWithGoogle}
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-semibold text-sm transition active:scale-95 disabled:opacity-60"
+              >
+                {loading ? (
+                  <span className="w-4 h-4 rounded-full border-2 border-slate-400 border-t-slate-900 animate-spin"></span>
+                ) : (
+                  <LogIn className="w-4 h-4 text-violet-600" />
+                )}
+                <span>Continue with Google</span>
+              </button>
+
+              {authError && (
+                <p className="mt-3 text-[11px] text-red-400 text-center">{authError}</p>
+              )}
+
+              <p className="text-[10px] text-slate-600 text-center mt-5 leading-relaxed">
+                By continuing you agree to Devibe's Terms and acknowledge the Privacy Policy.
+              </p>
+            </div>
+
+            <button
+              onClick={() => enterApp(false)}
+              className="w-full text-center text-xs text-slate-500 hover:text-slate-300 mt-4 transition"
+            >
+              Explore the platform without signing in →
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-100 font-sans selection:bg-violet-600/30 selection:text-white">
       
       {/* GLOW DECORATIONS */}
       <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-violet-600/10 rounded-full blur-[120px] pointer-events-none -translate-y-1/2"></div>
       <div className="absolute top-1/3 right-10 w-[400px] h-[400px] bg-cyan-500/5 rounded-full blur-[100px] pointer-events-none"></div>
-
-      {/* GLOBAL TOAST ACCENT OR METADATA BAR */}
-      <div className="relative z-50 border-b border-slate-800 bg-[#070B14] px-4 py-2 text-xs font-mono">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-1 text-slate-400">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Devibe Core Platform Active</span>
-            <span className="text-slate-600">|</span>
-            <span className="text-violet-400 font-medium">Model: Gemini 3.5 Flash</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <span>Server Latency: <span className="text-cyan-400">14ms</span></span>
-            <span className="hidden sm:inline text-slate-600">|</span>
-            <span>Environment: <span className="text-violet-400 font-medium">Cloud Sandboxed Sandbox-3000</span></span>
-          </div>
-        </div>
-      </div>
 
       {/* ————————————————— NAVIGATION HEADERS ————————————————— */}
       {currentMode === 'landing' ? (

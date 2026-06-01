@@ -844,23 +844,6 @@ export default function App() {
       <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-violet-600/10 rounded-full blur-[120px] pointer-events-none -translate-y-1/2"></div>
       <div className="absolute top-1/3 right-10 w-[400px] h-[400px] bg-cyan-500/5 rounded-full blur-[100px] pointer-events-none"></div>
 
-      {/* GLOBAL TOAST ACCENT OR METADATA BAR */}
-      <div className="relative z-50 border-b border-slate-800 bg-[#070B14] px-4 py-2 text-xs font-mono">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-1 text-slate-400">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Devibe Core Platform Active</span>
-            <span className="text-slate-600">|</span>
-            <span className="text-violet-400 font-medium">Model: Gemini 3.5 Flash</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <span>Server Latency: <span className="text-cyan-400">14ms</span></span>
-            <span className="hidden sm:inline text-slate-600">|</span>
-            <span>Environment: <span className="text-violet-400 font-medium">Cloud Sandboxed Sandbox-3000</span></span>
-          </div>
-        </div>
-      </div>
-
       {/* ————————————————— NAVIGATION HEADERS ————————————————— */}
       {currentMode === 'landing' ? (
         <header id="main-landing-header" className="sticky top-0 z-40 bg-[#0B0F19]/90 backdrop-blur-md border-b border-slate-800">

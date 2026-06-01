@@ -79,10 +79,12 @@ Haiku 4.5  ──fails validation/errors──▶  Sonnet 4.6  ──▶  Opus 4
 ```
 
 Each tier returns structured JSON (file list with real code) via Claude structured outputs;
-if a cheaper tier's output doesn't validate, the next tier is attempted. The response reports
-which `modelTier`/`model` produced the result and the full `escalation.attempts` trail. Set
-`startTier` (`haiku` | `sonnet` | `opus`) to raise the floor. Requires `ANTHROPIC_API_KEY`;
-without it the tool returns a deterministic Expo scaffold so it stays usable offline / in CI.
+if a cheaper tier's output doesn't validate, the next tier is attempted. After Claude, if no
+tier produced a valid result (or `ANTHROPIC_API_KEY` is unset), the tool falls back to
+**Gemini** (`GEMINI_API_KEY`) and finally to a deterministic Expo scaffold. The response
+reports `provider` (`claude` | `gemini` | `fallback`), `modelTier`/`model`, and the full
+`escalation.attempts` trail. Set `startTier` (`haiku` | `sonnet` | `opus`) to raise the
+Claude floor, or `provider` (`auto` | `claude` | `gemini`) to force one path.
 
 Example arguments:
 

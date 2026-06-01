@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { defineTool } from "./base.js";
 import { generateJsonWithEscalation, TIER_ORDER } from "../../services/claude.js";
+import { generateJson, isAiConfigured } from "../../services/ai.js";
 import { mobileAgent } from "../agents/mobile.agent.js";
 import { getDb, isDbConfigured } from "../../db/client.js";
 import { projects } from "../../db/schema.js";
@@ -19,6 +20,13 @@ const inputSchema = {
     .enum(["haiku", "sonnet", "opus"])
     .default("haiku")
     .describe("Lowest Claude tier to start from. Lesser models are tried first and escalate."),
+  provider: z
+    .enum(["auto", "claude", "gemini"])
+    .default("auto")
+    .describe(
+      "Which LLM to use. `auto` tries Claude (cost-tiered) then Gemini; `claude` uses Claude " +
+        "tiers only; `gemini` uses Gemini only.",
+    ),
   persist: z.boolean().default(true),
 };
 
@@ -165,16 +173,63 @@ export const generateMobileApp = defineTool({
       `Produce navigation, screens, reusable components, and project config. Include dependencies ` +
       `and run instructions.`;
 
-    const { data: app, source, tier, model, attempts } = await generateJsonWithEscalation<MobileApp>(
-      {
-        system,
-        prompt,
-        schema: outputJsonSchema as unknown as Record<string, unknown>,
-        validate: isMobileApp,
-        startTier: args.startTier,
-      },
-      expoFallback(appName, description, screens),
-    );
+    const fallback = expoFallback(appName, description, screens);
+
+    // Provider chain. Order:
+    //  - "claude": Claude cost-tiered only (Haiku -> Sonnet -> Opus).
+    //  - "gemini": Gemini only.
+    //  - "auto":   Claude tiers first, then Gemini as an additional step before
+    //              the deterministic fallback — gives the tool a working LLM
+    //              regardless of which provider is configured.
+    const tryClaude = args.provider !== "gemini";
+    const tryGemini = args.provider !== "claude";
+
+    let app: MobileApp = fallback;
+    let provider: "claude" | "gemini" | "fallback" = "fallback";
+    let source: "claude" | "gemini" | "fallback" = "fallback";
+    let tier: string | null = null;
+    let model: string | null = null;
+    let attempts: Array<{ tier: string; ok: boolean; reason?: string }> = [];
+
+    if (tryClaude) {
+      const claude = await generateJsonWithEscalation<MobileApp>(
+        {
+          system,
+          prompt,
+          schema: outputJsonSchema as unknown as Record<string, unknown>,
+          validate: isMobileApp,
+          startTier: args.startTier,
+        },
+        fallback,
+      );
+      attempts = claude.attempts;
+      if (claude.source === "claude") {
+        app = claude.data;
+        provider = "claude";
+        source = "claude";
+        tier = claude.tier;
+        model = claude.model;
+      }
+    }
+
+    if (source === "fallback" && tryGemini && isAiConfigured()) {
+      const gem = await generateJson<MobileApp>(
+        `${prompt}\n\nReturn ONLY a JSON object matching this shape: { appName, platform, summary, ` +
+          `dependencies[], runInstructions[], files[{path, language, description?, content}] }. ` +
+          `Files must contain real, working code.`,
+        fallback,
+        { system },
+      );
+      if (gem.source === "ai" && isMobileApp(gem.data)) {
+        app = gem.data;
+        provider = "gemini";
+        source = "gemini";
+        model = "gemini";
+        attempts = [...attempts, { tier: "gemini", ok: true }];
+      } else {
+        attempts = [...attempts, { tier: "gemini", ok: false, reason: "validation_or_unavailable" }];
+      }
+    }
 
     if (args.persist && args.projectId && isDbConfigured()) {
       await getDb()
@@ -194,9 +249,10 @@ export const generateMobileApp = defineTool({
       projectId: args.projectId,
       app,
       generatedBy: source,
+      provider,
       modelTier: tier,
       model,
-      escalation: { startTier: args.startTier, order: TIER_ORDER, attempts },
+      escalation: { provider: args.provider, startTier: args.startTier, claudeOrder: TIER_ORDER, attempts },
       agent: mobileAgent.role,
     };
   },

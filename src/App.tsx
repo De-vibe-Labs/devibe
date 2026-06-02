@@ -18,6 +18,7 @@ import { DevibeLogo } from './components/DevibeLogo';
 import { IDEPanel } from './components/IDEPanel';
 import { PrivyAuthButton } from './components/PrivyAuthButton';
 import { isPrivyConfigured } from './lib/privy-provider';
+import { currentOrigin, firebaseAuthSettingsUrl } from './firebase';
 import {
   getAttribution,
   getMyReferralCode,
@@ -1136,9 +1137,30 @@ export default function App() {
               )}
 
               {authError && /unauthorized-domain/i.test(authError) && (
-                <p className="mt-2 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded p-2 leading-relaxed">
-                  Google sign-in isn't allowed on this domain yet. Add the domain at <span className="font-mono">Firebase Console → Authentication → Settings → Authorized domains</span>, or use Privy above.
-                </p>
+                <div className="mt-2 text-left text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 leading-relaxed space-y-2">
+                  <p>
+                    Google sign-in isn't allowed on this domain yet. Add this origin to your Firebase project's authorized domains, then retry.
+                  </p>
+                  <div className="flex items-center gap-2 bg-slate-950/60 border border-amber-500/20 rounded p-1.5">
+                    <code className="font-mono text-amber-200 truncate flex-1">{currentOrigin}</code>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard.writeText(currentOrigin)}
+                      className="px-2 py-0.5 text-[10px] text-amber-100 hover:text-white bg-slate-900 border border-amber-500/30 rounded"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <a
+                    href={firebaseAuthSettingsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-amber-200 hover:text-white font-semibold"
+                  >
+                    Open Firebase → Authentication → Settings →
+                  </a>
+                  <p className="text-slate-400">Or skip this and use Privy above — it doesn't need the domain allowlist.</p>
+                </div>
               )}
 
               <p className="text-[10px] text-slate-600 text-center mt-5 leading-relaxed">

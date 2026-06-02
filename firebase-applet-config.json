@@ -1,10 +1,9 @@
 {
-  "projectId": "igneous-effort-397814",
-  "appId": "1:132190058843:web:1d11d98a5f888fa193c27e",
-  "apiKey": "AIzaSyDmUuyoIKx-4RYLQ7-Pg0vdvU9wDqnoVA4",
-  "authDomain": "igneous-effort-397814.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-6f33ae3d-4ac0-4b9a-aac1-fb1bc881eff6",
-  "storageBucket": "igneous-effort-397814.firebasestorage.app",
-  "messagingSenderId": "132190058843",
-  "measurementId": ""
+  "projectId": "de-vibe-8aca0",
+  "appId": "1:730481361820:web:ed58ef1ca281667e457e59",
+  "apiKey": "AIzaSyCd6Izpi6FTF4WGXr23PJx7vqvTsbjzuHg",
+  "authDomain": "de-vibe-8aca0.firebaseapp.com",
+  "storageBucket": "de-vibe-8aca0.firebasestorage.app",
+  "messagingSenderId": "730481361820",
+  "measurementId": "G-XB6VWN5D0X"
 }

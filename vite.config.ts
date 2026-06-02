@@ -18,5 +18,26 @@ export default defineConfig(() => {
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
+    build: {
+      // Split the heaviest deps into their own chunks so they don't bloat the
+      // initial paint and they cache independently across deploys. Monaco and
+      // Sandpack are the biggest offenders (~500 KB+ each).
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            monaco: ['@monaco-editor/react'],
+            sandpack: ['@codesandbox/sandpack-react'],
+            privy: ['@privy-io/react-auth'],
+            firebase: [
+              'firebase/app',
+              'firebase/auth',
+              'firebase/firestore',
+              'firebase/analytics',
+            ],
+          },
+        },
+      },
+      chunkSizeWarningLimit: 800,
+    },
   };
 });

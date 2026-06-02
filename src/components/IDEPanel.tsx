@@ -380,3 +380,6 @@ export function IDEPanel({
 function looksLikeReactNative(code: string): boolean {
   return /from\s+['"]react-native['"]/.test(code) || /<View\b|<Text\b|StyleSheet\.create/.test(code);
 }
+
+// Default export so React.lazy() can pull this module without an adapter.
+export default IDEPanel;

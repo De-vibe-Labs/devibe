@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { 
-  auth, 
-  googleProvider, 
-  signInWithPopup, 
-  signOut, 
+import {
+  auth,
+  googleProvider,
+  signInWithPopup,
+  signOut,
   onAuthStateChanged,
-  User 
+  currentOrigin,
+  firebaseAuthSettingsUrl,
+  User,
 } from "../firebase";
 
 interface AuthContextType {
@@ -44,14 +46,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
       console.error("Google Sign-In failed:", err);
-      // Give readable error message
-      let msg = err.message || "An expected error occurred during Google Auth.";
+      let msg = err.message || "An unexpected error occurred during Google Auth.";
       if (err.code === "auth/popup-closed-by-user") {
         msg = "The authentication popup was closed before completing.";
       } else if (err.code === "auth/cancelled-popup-request") {
         msg = "The auth popup request was cancelled.";
       } else if (err.code === "auth/network-request-failed") {
         msg = "Network connectivity issue detected. Please check your internet connection.";
+      } else if (err.code === "auth/unauthorized-domain") {
+        // The fix is server-side — surface it in the message so the user can act.
+        msg =
+          `auth/unauthorized-domain: this origin (${currentOrigin}) isn't allowed for Google sign-in. ` +
+          `Add it at Firebase Console → Authentication → Settings → Authorized domains, then retry. ` +
+          `Open: ${firebaseAuthSettingsUrl}`;
+      } else if (err.code === "auth/operation-not-allowed") {
+        msg =
+          "Google sign-in is disabled for this Firebase project. " +
+          "Enable it at Firebase Console → Authentication → Sign-in method.";
+      } else if (err.code === "auth/popup-blocked") {
+        msg = "Your browser blocked the sign-in popup. Allow popups for this site and retry.";
       }
       setError(msg);
     } finally {

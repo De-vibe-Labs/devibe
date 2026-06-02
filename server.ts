@@ -3,6 +3,8 @@ import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+import Stripe from "stripe";
+import { randomUUID } from "node:crypto";
 
 dotenv.config();
 
@@ -414,6 +416,146 @@ app.get('/api/referral/stats/:code', (req, res) => {
   if (!code) return res.status(400).json({ error: 'code required' });
   const signups = referralLedger.filter(r => r.ref === code);
   return res.json({ code, signups: signups.length, recent: signups.slice(-10).reverse() });
+});
+
+// ————————————————— Billing: Stripe Checkout + crypto payment intent —————————————————
+// Stripe is the cleanest path for fiat subscriptions; crypto is handled as a
+// one-off USDC transfer (on Base by default) that the user signs with their
+// Privy wallet (or any wallet) and we record once they paste the tx hash.
+//
+// Tx verification here is intentionally lightweight — for real money you should
+// poll an RPC (e.g. Alchemy/QuickNode) for receipt + ERC-20 Transfer log before
+// crediting. See the TODO inside cryptoConfirm.
+
+let stripeClient: Stripe | null = null;
+function getStripe(): Stripe | null {
+  if (stripeClient) return stripeClient;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key || !key.startsWith('sk_')) return null;
+  stripeClient = new Stripe(key);
+  return stripeClient;
+}
+
+const PLANS: Record<string, { name: string; priceUsd: number }> = {
+  starter: { name: 'Starter', priceUsd: 20 },
+  pro: { name: 'Pro', priceUsd: 49 },
+  team: { name: 'Team', priceUsd: 149 },
+};
+
+const CRYPTO_RECEIVER = process.env.DEVIBE_USDC_RECEIVER || '0x0000000000000000000000000000000000000000';
+const CRYPTO_CHAIN = (process.env.DEVIBE_CHAIN || 'base').toLowerCase(); // base | polygon | ethereum
+const USDC_CONTRACTS: Record<string, { address: string; chainId: number; chainName: string }> = {
+  base:     { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', chainId: 8453,  chainName: 'Base' },
+  polygon:  { address: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', chainId: 137,   chainName: 'Polygon' },
+  ethereum: { address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', chainId: 1,     chainName: 'Ethereum' },
+};
+
+interface CryptoIntent {
+  id: string;
+  plan: string;
+  userId: string | null;
+  ref: string | null;
+  amountUsd: number;
+  amountAtomic: string; // USDC has 6 decimals
+  token: 'USDC';
+  chain: string;
+  chainId: number;
+  chainName: string;
+  tokenAddress: string;
+  receiver: string;
+  createdAt: string;
+  status: 'pending' | 'submitted' | 'confirmed';
+  txHash?: string;
+}
+const cryptoIntents = new Map<string, CryptoIntent>();
+
+app.post('/api/billing/checkout', async (req, res) => {
+  const { plan, userId, ref, successUrl, cancelUrl } = req.body ?? {};
+  if (!plan || !PLANS[plan]) return res.status(400).json({ error: 'invalid plan' });
+  const stripe = getStripe();
+
+  // No Stripe key → return a mock URL the frontend can still navigate to so
+  // the UX is testable without secrets. The URL is clearly fake.
+  if (!stripe) {
+    const mockId = randomUUID().slice(0, 8);
+    return res.json({
+      url: `${successUrl || '/'}#mock_checkout_${mockId}`,
+      mock: true,
+      note: 'STRIPE_SECRET_KEY not configured; returning a mock URL so the flow stays clickable.',
+    });
+  }
+
+  try {
+    const priceId = process.env[`STRIPE_PRICE_ID_${plan.toUpperCase()}`] || process.env.STRIPE_PRICE_ID;
+    if (!priceId) return res.status(400).json({ error: 'STRIPE_PRICE_ID is not configured' });
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: successUrl || `${process.env.APP_URL || ''}/?subscribed=1`,
+      cancel_url: cancelUrl || `${process.env.APP_URL || ''}/?subscribe_cancelled=1`,
+      client_reference_id: userId || undefined,
+      metadata: {
+        plan,
+        ...(userId ? { userId } : {}),
+        ...(ref ? { ref } : {}),
+      },
+    });
+    return res.json({ url: session.url, sessionId: session.id });
+  } catch (err: any) {
+    console.error('Stripe checkout error:', err.message);
+    return res.status(500).json({ error: err.message || 'Stripe checkout failed' });
+  }
+});
+
+app.post('/api/billing/crypto-intent', (req, res) => {
+  const { plan, userId, ref } = req.body ?? {};
+  if (!plan || !PLANS[plan]) return res.status(400).json({ error: 'invalid plan' });
+  const usdc = USDC_CONTRACTS[CRYPTO_CHAIN] || USDC_CONTRACTS.base;
+  const priceUsd = PLANS[plan].priceUsd;
+  const intent: CryptoIntent = {
+    id: `ci_${randomUUID().replace(/-/g, '').slice(0, 16)}`,
+    plan,
+    userId: typeof userId === 'string' ? userId : null,
+    ref: typeof ref === 'string' && ref ? ref : null,
+    amountUsd: priceUsd,
+    amountAtomic: String(priceUsd * 1_000_000), // USDC = 6 decimals
+    token: 'USDC',
+    chain: CRYPTO_CHAIN,
+    chainId: usdc.chainId,
+    chainName: usdc.chainName,
+    tokenAddress: usdc.address,
+    receiver: CRYPTO_RECEIVER,
+    createdAt: new Date().toISOString(),
+    status: 'pending',
+  };
+  cryptoIntents.set(intent.id, intent);
+  return res.json(intent);
+});
+
+app.post('/api/billing/crypto-confirm', (req, res) => {
+  const { intentId, txHash } = req.body ?? {};
+  if (typeof intentId !== 'string' || typeof txHash !== 'string') {
+    return res.status(400).json({ error: 'intentId and txHash are required' });
+  }
+  const intent = cryptoIntents.get(intentId);
+  if (!intent) return res.status(404).json({ error: 'intent not found' });
+  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+    return res.status(400).json({ error: 'invalid txHash format' });
+  }
+  // TODO: verify on-chain — poll the chain RPC for the receipt and look for a
+  // matching ERC-20 Transfer log (token=intent.tokenAddress, to=intent.receiver,
+  // value>=intent.amountAtomic). Until then we trust the client and mark it
+  // confirmed; sufficient for staging / testnet flows.
+  intent.txHash = txHash;
+  intent.status = 'confirmed';
+  console.log(`[billing] crypto subscription confirmed: ${intent.id} (${intent.amountUsd} USDC) tx=${txHash}`);
+  return res.json(intent);
+});
+
+app.get('/api/billing/crypto-intent/:id', (req, res) => {
+  const intent = cryptoIntents.get(req.params.id);
+  if (!intent) return res.status(404).json({ error: 'intent not found' });
+  return res.json(intent);
 });
 
 // GET /api/github/auth-url -> Generate oauth authorize URL

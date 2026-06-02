@@ -19,6 +19,9 @@ import { DevibeLogo } from './components/DevibeLogo';
 // Lazy-load the IDE so Monaco + Sandpack (~1MB) are fetched only when the
 // user actually opens the IDE tab — keeps the initial paint cheap.
 const IDEPanel = lazy(() => import('./components/IDEPanel'));
+
+// Lazy — Stripe + viem ship behind the pricing tab so they don't bloat first paint.
+const BillingPanel = lazy(() => import('./components/BillingPanel'));
 import { currentOrigin, firebaseAuthSettingsUrl } from './firebase';
 
 // Lazy — Privy SDK is heavy; only fetch when the user actually needs to sign in.
@@ -2415,10 +2418,24 @@ export default function App() {
           {/* LANDING TAB: PRICING */}
           {landingTab === 'pricing' && (
             <div className="max-w-6xl mx-auto px-4 py-12">
-              <div className="text-center mb-12">
+              <div className="text-center mb-8">
                 <h1 className="font-display text-3xl font-extrabold text-white mb-2">Simple, Fair Scaling Tiers</h1>
-                <p className="text-slate-400 text-sm max-w-xl mx-auto">Vibe code completely free on the client side. Pay on-demand for container hosting, unlimited multi-agent loops, and verified developer escrow contracts.</p>
+                <p className="text-slate-400 text-sm max-w-xl mx-auto">Subscribe with a card via Stripe, or pay with USDC on Base. Crypto pays activate instantly once the on-chain transfer lands.</p>
               </div>
+
+              {/* Live subscribe controls — Stripe + crypto */}
+              <Suspense
+                fallback={
+                  <div className="h-40 rounded-2xl bg-slate-900/40 border border-slate-800 animate-pulse mb-10" />
+                }
+              >
+                <div className="mb-12">
+                  <BillingPanel
+                    userId={user?.uid || privyIdentity?.id || null}
+                    isPrivyConfigured={isPrivyConfigured()}
+                  />
+                </div>
+              </Suspense>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 

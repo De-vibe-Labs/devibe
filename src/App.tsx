@@ -15,6 +15,7 @@ import {
 } from './data';
 import { useAuth } from './context/AuthContext';
 import { DevibeLogo } from './components/DevibeLogo';
+import { IDEPanel } from './components/IDEPanel';
 
 export default function App() {
   const { user, loading, error: authError, loginWithGoogle, logout } = useAuth();
@@ -59,7 +60,7 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationLogs, setGenerationLogs] = useState<string[]>([]);
   const [generatedApp, setGeneratedApp] = useState<GeneratedAppSchema | null>(null);
-  const [activeGenTab, setActiveGenTab] = useState<'live_preview' | 'preview' | 'prd' | 'db' | 'tasks'>('live_preview');
+  const [activeGenTab, setActiveGenTab] = useState<'ide' | 'live_preview' | 'preview' | 'prd' | 'db' | 'tasks'>('ide');
   const [chatPayload, setChatPayload] = useState<{role: 'user' | 'agent', text: string}[]>([]);
   const [refineInput, setRefineInput] = useState('');
   const [isRefining, setIsRefining] = useState(false);
@@ -618,7 +619,7 @@ export default function App() {
 
       setGeneratedApp(payload);
       setIsGenerating(false);
-      setActiveGenTab('live_preview');
+      setActiveGenTab('ide');
       
       // Add agent reply in chat flow
       setChatPayload(prev => [...prev, { 
@@ -725,7 +726,7 @@ export default function App() {
 
       setGeneratedApp(payload);
       setIsRefining(false);
-      setActiveGenTab('live_preview');
+      setActiveGenTab('ide');
 
       // Add response to chat
       setChatPayload(prev => [...prev, {
@@ -2733,12 +2734,19 @@ export default function App() {
 
                       {/* Tab Switchers */}
                       <div className="flex items-center gap-1 border-b border-slate-800 mb-4 overflow-x-auto pb-1">
-                        <button 
+                        <button
+                          onClick={() => setActiveGenTab('ide')}
+                          className={`px-3 py-1.5 text-xs rounded-lg transition flex items-center gap-1.5 ${activeGenTab === 'ide' ? 'bg-violet-600 text-white font-medium' : 'text-slate-400 hover:text-slate-200'}`}
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>IDE</span>
+                        </button>
+                        <button
                           onClick={() => setActiveGenTab('live_preview')}
                           className={`px-3 py-1.5 text-xs rounded-lg transition flex items-center gap-1.5 ${activeGenTab === 'live_preview' ? 'bg-violet-600 text-white font-medium' : 'text-slate-400 hover:text-slate-200'}`}
                         >
                           <Play className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-                          <span>Live Interactive Preview</span>
+                          <span>Interactive Preview</span>
                         </button>
                         <button 
                           onClick={() => setActiveGenTab('preview')}
@@ -2771,9 +2779,21 @@ export default function App() {
                       </div>
 
                       {/* TAB 0: LIVE INTERACTIVE PREVIEW & DESIGN REFLECTION GRID */}
+                      {activeGenTab === 'ide' && (
+                        <IDEPanel
+                          initialCode={generatedApp.codeSnippets?.[0]?.code || '// Generated code will appear here.'}
+                          filename={generatedApp.codeSnippets?.[0]?.filename || 'App.tsx'}
+                          chat={chatPayload}
+                          chatInput={refineInput}
+                          onChatInputChange={setRefineInput}
+                          onSubmitChat={() => executeRefineRequest()}
+                          isWorking={isRefining || isGenerating}
+                        />
+                      )}
+
                       {activeGenTab === 'live_preview' && (
                         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                          
+
                           {/* PREVIEW CONTAINER - COLS 1 to 8 */}
                           <div className="lg:col-span-8 space-y-4">
                             

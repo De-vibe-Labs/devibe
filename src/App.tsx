@@ -83,6 +83,10 @@ export default function App() {
   const [activePushLogs, setActivePushLogs] = useState<string[]>([]);
   const [isPushingCode, setIsPushingCode] = useState<boolean>(false);
 
+  // IDE state
+  const [ideTemplate, setIdeTemplate] = useState<'web' | 'expo'>('web');
+  const [isExportingFromIDE, setIsExportingFromIDE] = useState(false);
+
   // Job chat + validation
   const [activeChatJobId, setActiveChatJobId] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState('');
@@ -742,6 +746,76 @@ export default function App() {
       clearInterval(interval);
       setGenerationLogs(prev => [...prev, `[Critical Error] Failed to refine app: ${err.message || 'Network Timeout'}`]);
       setIsRefining(false);
+    }
+  };
+
+  // ————————————————— IDE: Save snapshot & Export to GitHub —————————————————
+  const saveIDESnapshot = (code: string) => {
+    if (!generatedApp) return;
+    const existing = generatedApp.codeSnippets?.[0];
+    const headSnippet = {
+      filename: existing?.filename || 'App.tsx',
+      language: existing?.language || 'tsx',
+      code,
+    };
+    const updated = {
+      ...generatedApp,
+      codeSnippets: [headSnippet, ...(generatedApp.codeSnippets?.slice(1) ?? [])],
+    };
+    setGeneratedApp(updated);
+    setChatPayload(prev => [
+      ...prev,
+      { role: 'agent', text: `Snapshot saved (${code.length.toLocaleString()} chars).` },
+    ]);
+  };
+
+  const exportIDECodeToGitHub = async (code: string): Promise<void> => {
+    if (!selectedProject?.githubRepo || !githubToken || !generatedApp) return;
+    setIsExportingFromIDE(true);
+    try {
+      const resp = await fetch('/api/github/push-files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: githubToken,
+          repo: selectedProject.githubRepo,
+          appName: generatedApp.appName,
+          code,
+          schema: generatedApp.databaseSchema || '-- Schema',
+          description: generatedApp.description,
+          commitMsg: `IDE export from Devibe: ${generatedApp.appName}`,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `Push failed with status ${resp.status}`);
+      }
+      const data = await resp.json();
+      const newPush = {
+        commitSha: data.commitSha || 'ide-sha',
+        commitMessage: `IDE export: ${generatedApp.appName}`,
+        timestamp: new Date().toISOString(),
+      };
+      const updatedProjects = projects.map(p =>
+        p.id === selectedProject.id
+          ? { ...p, githubPushes: [newPush, ...((p as any).githubPushes || [])] }
+          : p,
+      );
+      saveProjectsToStorage(updatedProjects);
+      setSelectedProject(prev =>
+        prev ? { ...prev, githubPushes: [newPush, ...((prev as any).githubPushes || [])] } : null,
+      );
+      setChatPayload(prev => [
+        ...prev,
+        { role: 'agent', text: `Pushed to ${selectedProject.githubRepo} (commit ${newPush.commitSha.slice(0, 7)}).` },
+      ]);
+    } catch (err: any) {
+      setChatPayload(prev => [
+        ...prev,
+        { role: 'agent', text: `GitHub export failed: ${err.message ?? 'unknown error'}` },
+      ]);
+    } finally {
+      setIsExportingFromIDE(false);
     }
   };
 
@@ -2782,12 +2856,26 @@ export default function App() {
                       {activeGenTab === 'ide' && (
                         <IDEPanel
                           initialCode={generatedApp.codeSnippets?.[0]?.code || '// Generated code will appear here.'}
-                          filename={generatedApp.codeSnippets?.[0]?.filename || 'App.tsx'}
+                          filename={generatedApp.codeSnippets?.[0]?.filename || (ideTemplate === 'expo' ? 'App.tsx (Expo)' : 'App.tsx')}
                           chat={chatPayload}
                           chatInput={refineInput}
                           onChatInputChange={setRefineInput}
                           onSubmitChat={() => executeRefineRequest()}
                           isWorking={isRefining || isGenerating}
+                          onSaveSnapshot={saveIDESnapshot}
+                          onExportToGitHub={
+                            githubToken && selectedProject?.githubRepo ? exportIDECodeToGitHub : null
+                          }
+                          exportLabel={
+                            !githubToken
+                              ? 'Connect GitHub first'
+                              : !selectedProject?.githubRepo
+                                ? 'Open a project with a linked repo to export'
+                                : undefined
+                          }
+                          isExporting={isExportingFromIDE}
+                          template={ideTemplate}
+                          onTemplateChange={setIdeTemplate}
                         />
                       )}
 

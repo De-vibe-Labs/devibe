@@ -8,13 +8,14 @@ import {
   ChevronDown, HelpCircle, Briefcase, Zap, Star, LogIn, UserCheck, User,
   Brain, Rocket
 } from 'lucide-react';
-import { Project, Task, Developer, MarketplaceJob, GeneratedAppSchema } from './types';
+import { Project, Task, Developer, MarketplaceJob, GeneratedAppSchema, ChatMessage, JobValidation } from './types';
 import { 
   STARTER_PROJECTS, MARKETPLACE_DEVELOPERS, RECENT_JOBS, 
   TEMPLATE_CATEGORIES, DOC_SECTIONS, BLOG_POSTS 
 } from './data';
 import { useAuth } from './context/AuthContext';
 import { DevibeLogo } from './components/DevibeLogo';
+import { IDEPanel } from './components/IDEPanel';
 
 export default function App() {
   const { user, loading, error: authError, loginWithGoogle, logout } = useAuth();
@@ -59,7 +60,7 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationLogs, setGenerationLogs] = useState<string[]>([]);
   const [generatedApp, setGeneratedApp] = useState<GeneratedAppSchema | null>(null);
-  const [activeGenTab, setActiveGenTab] = useState<'live_preview' | 'preview' | 'prd' | 'db' | 'tasks'>('live_preview');
+  const [activeGenTab, setActiveGenTab] = useState<'ide' | 'live_preview' | 'preview' | 'prd' | 'db' | 'tasks'>('ide');
   const [chatPayload, setChatPayload] = useState<{role: 'user' | 'agent', text: string}[]>([]);
   const [refineInput, setRefineInput] = useState('');
   const [isRefining, setIsRefining] = useState(false);
@@ -81,6 +82,20 @@ export default function App() {
   const [githubError, setGithubError] = useState<string | null>(null);
   const [activePushLogs, setActivePushLogs] = useState<string[]>([]);
   const [isPushingCode, setIsPushingCode] = useState<boolean>(false);
+
+  // IDE state
+  const [ideTemplate, setIdeTemplate] = useState<'web' | 'expo'>('web');
+  const [isExportingFromIDE, setIsExportingFromIDE] = useState(false);
+
+  // Job chat + validation
+  const [activeChatJobId, setActiveChatJobId] = useState<string | null>(null);
+  const [chatInput, setChatInput] = useState('');
+  const [devTypingForJobId, setDevTypingForJobId] = useState<string | null>(null);
+  const [validationJobId, setValidationJobId] = useState<string | null>(null);
+  const [validationCriteria, setValidationCriteria] = useState<Record<string, boolean>>({});
+  const [validationNotes, setValidationNotes] = useState('');
+  const [validationDecision, setValidationDecision] = useState<'approved' | 'changes_requested' | null>(null);
+  const chatScrollRef = React.useRef<HTMLDivElement | null>(null);
 
   // GitHub Fetch Helper
   const fetchGitHubProfileAndRepos = async (tokenValue: string) => {
@@ -364,6 +379,153 @@ export default function App() {
     saveJobsToStorage(updated);
   };
 
+  // ————————————————— JOB CHAT —————————————————
+  const findDeveloperByName = (name?: string) =>
+    name ? developers.find(d => d.name === name) : undefined;
+
+  const appendJobMessages = (jobId: string, newMsgs: ChatMessage[]) => {
+    const updated = marketplaceJobs.map(j =>
+      j.id === jobId ? { ...j, messages: [...(j.messages ?? []), ...newMsgs] } : j
+    );
+    saveJobsToStorage(updated);
+  };
+
+  const sendChatMessage = (jobId: string, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const job = marketplaceJobs.find(j => j.id === jobId);
+    if (!job) return;
+    const founderMsg: ChatMessage = {
+      id: `msg-${Date.now()}-f`,
+      sender: 'founder',
+      authorName: user?.displayName || 'You',
+      authorAvatar: user?.photoURL || undefined,
+      text: trimmed,
+      timestamp: new Date().toISOString(),
+    };
+    appendJobMessages(jobId, [founderMsg]);
+    setChatInput('');
+
+    // Simulate dev typing + canned reply, status-aware.
+    const dev = findDeveloperByName(job.assignedDev);
+    if (!dev) return;
+    setDevTypingForJobId(jobId);
+    const replyText = composeDevReply(job, trimmed);
+    window.setTimeout(() => {
+      const devMsg: ChatMessage = {
+        id: `msg-${Date.now()}-d`,
+        sender: 'dev',
+        authorName: dev.name,
+        authorAvatar: dev.avatar,
+        text: replyText,
+        timestamp: new Date().toISOString(),
+      };
+      appendJobMessages(jobId, [devMsg]);
+      setDevTypingForJobId(prev => (prev === jobId ? null : prev));
+    }, 1200);
+  };
+
+  const composeDevReply = (job: MarketplaceJob, founderText: string): string => {
+    const lower = founderText.toLowerCase();
+    if (/eta|when|deadline|timeline/.test(lower)) {
+      return `Tracking to the next milestone — I'll push an update by end of day. Status: ${job.status}.`;
+    }
+    if (/bug|broken|fix|issue/.test(lower)) {
+      return `Got it — reproducing on my end. I'll commit a fix and link the PR in this thread.`;
+    }
+    if (/scope|change|requirement/.test(lower)) {
+      return `Happy to take that on. I'll send a quick scope/timeline note before I start.`;
+    }
+    if (job.status === 'open' || job.status === 'assigned') {
+      return `Thanks for the context. Kicking off Milestone 1 now and will check in after each step.`;
+    }
+    if (job.status === 'escrow') {
+      return `Acknowledged. All milestones are in progress against the escrow — happy to walk through any item before you validate.`;
+    }
+    return `Thanks — I'll keep this thread updated as I go.`;
+  };
+
+  const openChat = (jobId: string) => {
+    setActiveChatJobId(jobId);
+    // Seed an introduction from the dev on first open.
+    const job = marketplaceJobs.find(j => j.id === jobId);
+    const dev = findDeveloperByName(job?.assignedDev);
+    if (job && dev && (!job.messages || job.messages.length === 0)) {
+      const intro: ChatMessage = {
+        id: `msg-${Date.now()}-intro`,
+        sender: 'dev',
+        authorName: dev.name,
+        authorAvatar: dev.avatar,
+        text: `Hi! I've reviewed "${job.projectTitle}". Ready to start when you are — let me know any priorities or constraints.`,
+        timestamp: new Date().toISOString(),
+      };
+      appendJobMessages(jobId, [intro]);
+    }
+  };
+
+  // ————————————————— JOB VALIDATION —————————————————
+  const allMilestonesComplete = (job: MarketplaceJob): boolean => {
+    const steps = getJobSteps(job);
+    return steps.length > 0 && steps.every(s => s.status === 'completed');
+  };
+
+  const canValidate = (job: MarketplaceJob): boolean =>
+    Boolean(job.assignedDev) && job.status === 'escrow' && allMilestonesComplete(job);
+
+  const openValidationModal = (jobId: string) => {
+    const job = marketplaceJobs.find(j => j.id === jobId);
+    if (!job) return;
+    const steps = getJobSteps(job);
+    const initial: Record<string, boolean> = {};
+    steps.forEach(s => { initial[s.id] = true; });
+    setValidationCriteria(initial);
+    setValidationNotes('');
+    setValidationDecision(null);
+    setValidationJobId(jobId);
+  };
+
+  const submitValidation = (decision: 'approved' | 'changes_requested') => {
+    if (!validationJobId) return;
+    const job = marketplaceJobs.find(j => j.id === validationJobId);
+    if (!job) return;
+    const steps = getJobSteps(job);
+    const criteria = steps.map(s => ({ stepId: s.id, title: s.title, passed: !!validationCriteria[s.id] }));
+    const validation: JobValidation = {
+      decision,
+      criteria,
+      notes: validationNotes.trim(),
+      validatedAt: new Date().toISOString(),
+    };
+
+    const updated = marketplaceJobs.map(j => {
+      if (j.id !== validationJobId) return j;
+      const systemMsg: ChatMessage = {
+        id: `msg-${Date.now()}-v`,
+        sender: 'system',
+        authorName: 'Devibe Escrow',
+        text: decision === 'approved'
+          ? `Job validated by founder. Payment released from escrow. ${validationNotes.trim() ? `Note: ${validationNotes.trim()}` : ''}`.trim()
+          : `Founder requested changes${validationNotes.trim() ? `: ${validationNotes.trim()}` : '.'}`,
+        timestamp: new Date().toISOString(),
+      };
+      return {
+        ...j,
+        status: decision === 'approved' ? 'completed' as const : j.status,
+        validation,
+        messages: [...(j.messages ?? []), systemMsg],
+      };
+    });
+    saveJobsToStorage(updated);
+    setValidationJobId(null);
+  };
+
+  // Auto-scroll the chat panel to the newest message.
+  useEffect(() => {
+    if (activeChatJobId && chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [activeChatJobId, marketplaceJobs, devTypingForJobId]);
+
   // Create Project Callback
   const handleAddNewProject = (name: string, desc: string, type: Project['type'], stack: string) => {
     const newProj: Project = {
@@ -461,7 +623,7 @@ export default function App() {
 
       setGeneratedApp(payload);
       setIsGenerating(false);
-      setActiveGenTab('live_preview');
+      setActiveGenTab('ide');
       
       // Add agent reply in chat flow
       setChatPayload(prev => [...prev, { 
@@ -568,7 +730,7 @@ export default function App() {
 
       setGeneratedApp(payload);
       setIsRefining(false);
-      setActiveGenTab('live_preview');
+      setActiveGenTab('ide');
 
       // Add response to chat
       setChatPayload(prev => [...prev, {
@@ -584,6 +746,76 @@ export default function App() {
       clearInterval(interval);
       setGenerationLogs(prev => [...prev, `[Critical Error] Failed to refine app: ${err.message || 'Network Timeout'}`]);
       setIsRefining(false);
+    }
+  };
+
+  // ————————————————— IDE: Save snapshot & Export to GitHub —————————————————
+  const saveIDESnapshot = (code: string) => {
+    if (!generatedApp) return;
+    const existing = generatedApp.codeSnippets?.[0];
+    const headSnippet = {
+      filename: existing?.filename || 'App.tsx',
+      language: existing?.language || 'tsx',
+      code,
+    };
+    const updated = {
+      ...generatedApp,
+      codeSnippets: [headSnippet, ...(generatedApp.codeSnippets?.slice(1) ?? [])],
+    };
+    setGeneratedApp(updated);
+    setChatPayload(prev => [
+      ...prev,
+      { role: 'agent', text: `Snapshot saved (${code.length.toLocaleString()} chars).` },
+    ]);
+  };
+
+  const exportIDECodeToGitHub = async (code: string): Promise<void> => {
+    if (!selectedProject?.githubRepo || !githubToken || !generatedApp) return;
+    setIsExportingFromIDE(true);
+    try {
+      const resp = await fetch('/api/github/push-files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: githubToken,
+          repo: selectedProject.githubRepo,
+          appName: generatedApp.appName,
+          code,
+          schema: generatedApp.databaseSchema || '-- Schema',
+          description: generatedApp.description,
+          commitMsg: `IDE export from Devibe: ${generatedApp.appName}`,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `Push failed with status ${resp.status}`);
+      }
+      const data = await resp.json();
+      const newPush = {
+        commitSha: data.commitSha || 'ide-sha',
+        commitMessage: `IDE export: ${generatedApp.appName}`,
+        timestamp: new Date().toISOString(),
+      };
+      const updatedProjects = projects.map(p =>
+        p.id === selectedProject.id
+          ? { ...p, githubPushes: [newPush, ...((p as any).githubPushes || [])] }
+          : p,
+      );
+      saveProjectsToStorage(updatedProjects);
+      setSelectedProject(prev =>
+        prev ? { ...prev, githubPushes: [newPush, ...((prev as any).githubPushes || [])] } : null,
+      );
+      setChatPayload(prev => [
+        ...prev,
+        { role: 'agent', text: `Pushed to ${selectedProject.githubRepo} (commit ${newPush.commitSha.slice(0, 7)}).` },
+      ]);
+    } catch (err: any) {
+      setChatPayload(prev => [
+        ...prev,
+        { role: 'agent', text: `GitHub export failed: ${err.message ?? 'unknown error'}` },
+      ]);
+    } finally {
+      setIsExportingFromIDE(false);
     }
   };
 
@@ -2576,12 +2808,19 @@ export default function App() {
 
                       {/* Tab Switchers */}
                       <div className="flex items-center gap-1 border-b border-slate-800 mb-4 overflow-x-auto pb-1">
-                        <button 
+                        <button
+                          onClick={() => setActiveGenTab('ide')}
+                          className={`px-3 py-1.5 text-xs rounded-lg transition flex items-center gap-1.5 ${activeGenTab === 'ide' ? 'bg-violet-600 text-white font-medium' : 'text-slate-400 hover:text-slate-200'}`}
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>IDE</span>
+                        </button>
+                        <button
                           onClick={() => setActiveGenTab('live_preview')}
                           className={`px-3 py-1.5 text-xs rounded-lg transition flex items-center gap-1.5 ${activeGenTab === 'live_preview' ? 'bg-violet-600 text-white font-medium' : 'text-slate-400 hover:text-slate-200'}`}
                         >
                           <Play className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-                          <span>Live Interactive Preview</span>
+                          <span>Interactive Preview</span>
                         </button>
                         <button 
                           onClick={() => setActiveGenTab('preview')}
@@ -2614,9 +2853,35 @@ export default function App() {
                       </div>
 
                       {/* TAB 0: LIVE INTERACTIVE PREVIEW & DESIGN REFLECTION GRID */}
+                      {activeGenTab === 'ide' && (
+                        <IDEPanel
+                          initialCode={generatedApp.codeSnippets?.[0]?.code || '// Generated code will appear here.'}
+                          filename={generatedApp.codeSnippets?.[0]?.filename || (ideTemplate === 'expo' ? 'App.tsx (Expo)' : 'App.tsx')}
+                          chat={chatPayload}
+                          chatInput={refineInput}
+                          onChatInputChange={setRefineInput}
+                          onSubmitChat={() => executeRefineRequest()}
+                          isWorking={isRefining || isGenerating}
+                          onSaveSnapshot={saveIDESnapshot}
+                          onExportToGitHub={
+                            githubToken && selectedProject?.githubRepo ? exportIDECodeToGitHub : null
+                          }
+                          exportLabel={
+                            !githubToken
+                              ? 'Connect GitHub first'
+                              : !selectedProject?.githubRepo
+                                ? 'Open a project with a linked repo to export'
+                                : undefined
+                          }
+                          isExporting={isExportingFromIDE}
+                          template={ideTemplate}
+                          onTemplateChange={setIdeTemplate}
+                        />
+                      )}
+
                       {activeGenTab === 'live_preview' && (
                         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                          
+
                           {/* PREVIEW CONTAINER - COLS 1 to 8 */}
                           <div className="lg:col-span-8 space-y-4">
                             
@@ -3466,35 +3731,69 @@ export default function App() {
 
                       <div className="mt-4 pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 text-xs">
                         <div className="font-mono text-slate-500 text-[11px]">
-                          STATUS: <span className="text-violet-400 font-semibold">{job.status.toUpperCase()}</span> 
+                          STATUS: <span className="text-violet-400 font-semibold">{job.status.toUpperCase()}</span>
                           {job.assignedDev && <> | ASSIGNED: <span className="text-white font-medium">{job.assignedDev}</span></>}
                         </div>
 
-                        {job.status === 'open' ? (
-                          <button 
-                            onClick={() => {
-                              const updated = marketplaceJobs.map(j => j.id === job.id ? { ...j, status: 'assigned' as const, assignedDev: 'Elena Rostova' } : j);
-                              saveJobsToStorage(updated);
-                            }}
-                            className="px-3 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 rounded text-xs font-medium"
-                          >
-                            Assign Elite Architect Elena Rostova
-                          </button>
-                        ) : job.status === 'assigned' ? (
-                          <button 
-                            onClick={() => {
-                              const updated = marketplaceJobs.map(j => j.id === job.id ? { ...j, status: 'escrow' as const } : j);
-                              saveJobsToStorage(updated);
-                            }}
-                            className="px-3 py-1 bg-violet-600 text-white rounded text-xs font-semibold"
-                          >
-                            Deposit Budget in Escrow Container
-                          </button>
-                        ) : (
-                          <span className="text-emerald-400 font-bold text-xs flex items-center gap-1">
-                            <CheckCircle2 className="w-4 h-4" /> Paid Out Escrow Complete
-                          </span>
-                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {job.assignedDev && (
+                            <button
+                              onClick={() => openChat(job.id)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded text-xs font-medium transition"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5 text-cyan-400" />
+                              <span>Chat with {job.assignedDev.split(' ')[0]}</span>
+                              {job.messages && job.messages.length > 0 && (
+                                <span className="ml-1 px-1.5 py-0.5 bg-violet-600/30 border border-violet-500/40 text-violet-200 rounded text-[9px] font-mono">
+                                  {job.messages.length}
+                                </span>
+                              )}
+                            </button>
+                          )}
+
+                          {job.status === 'open' ? (
+                            <button
+                              onClick={() => {
+                                const updated = marketplaceJobs.map(j => j.id === job.id ? { ...j, status: 'assigned' as const, assignedDev: 'Elena Rostova' } : j);
+                                saveJobsToStorage(updated);
+                              }}
+                              className="px-3 py-1 bg-slate-800 hover:bg-slate-750 text-slate-300 rounded text-xs font-medium"
+                            >
+                              Assign Elite Architect Elena Rostova
+                            </button>
+                          ) : job.status === 'assigned' ? (
+                            <button
+                              onClick={() => {
+                                const updated = marketplaceJobs.map(j => j.id === job.id ? { ...j, status: 'escrow' as const } : j);
+                                saveJobsToStorage(updated);
+                              }}
+                              className="px-3 py-1 bg-violet-600 hover:bg-violet-500 text-white rounded text-xs font-semibold"
+                            >
+                              Deposit Budget in Escrow Container
+                            </button>
+                          ) : job.status === 'escrow' ? (
+                            canValidate(job) ? (
+                              <button
+                                onClick={() => openValidationModal(job.id)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white rounded text-xs font-semibold transition"
+                              >
+                                <CheckSquare className="w-3.5 h-3.5" />
+                                <span>Validate & Release Payment</span>
+                              </button>
+                            ) : (
+                              <span
+                                title="Complete all milestones to enable validation"
+                                className="px-3 py-1 bg-slate-800/60 border border-slate-700 text-slate-400 rounded text-[11px] font-mono"
+                              >
+                                Awaiting milestone completion
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-emerald-400 font-bold text-xs flex items-center gap-1">
+                              <CheckCircle2 className="w-4 h-4" /> Paid Out Escrow Complete
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -3629,6 +3928,249 @@ export default function App() {
 
         </div>
       )}
+
+      {/* ————————————————— JOB CHAT PANEL (slide-in) ————————————————— */}
+      {(() => {
+        const job = activeChatJobId ? marketplaceJobs.find(j => j.id === activeChatJobId) : null;
+        if (!job) return null;
+        const dev = findDeveloperByName(job.assignedDev);
+        const messages = job.messages ?? [];
+        const isTyping = devTypingForJobId === job.id;
+
+        return (
+          <>
+            <div
+              className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-sm"
+              onClick={() => { setActiveChatJobId(null); setChatInput(''); }}
+            />
+            <aside
+              role="dialog"
+              aria-label={`Chat with ${dev?.name ?? 'developer'}`}
+              className="fixed top-0 right-0 z-[61] h-full w-full sm:w-[420px] bg-[#0F1424] border-l border-slate-800 shadow-2xl shadow-violet-950/30 flex flex-col"
+            >
+              {/* Header */}
+              <header className="px-4 py-3 border-b border-slate-800 flex items-center gap-3">
+                {dev?.avatar ? (
+                  <img src={dev.avatar} alt={dev.name} className="w-9 h-9 rounded-full object-cover border border-violet-500/30" />
+                ) : (
+                  <div className="w-9 h-9 rounded-full bg-violet-600 flex items-center justify-center font-bold text-xs text-white">
+                    {(dev?.name || job.assignedDev || 'D').slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-white truncate">{dev?.name ?? job.assignedDev}</p>
+                  <p className="text-[10px] text-slate-400 truncate">
+                    {dev?.title ?? 'Assigned developer'} • <span className="text-violet-400 font-mono uppercase">{job.status}</span>
+                  </p>
+                </div>
+                <button
+                  onClick={() => { setActiveChatJobId(null); setChatInput(''); }}
+                  className="text-slate-400 hover:text-white text-lg leading-none px-2"
+                  aria-label="Close chat"
+                >
+                  ×
+                </button>
+              </header>
+
+              {/* Job pill */}
+              <div className="px-4 py-2 border-b border-slate-800/80 bg-slate-950/40 flex items-center justify-between text-[11px]">
+                <span className="text-slate-400 font-mono truncate">JOB: <span className="text-slate-200">{job.projectTitle}</span></span>
+                <span className="text-emerald-400 font-bold">${job.budget}</span>
+              </div>
+
+              {/* Messages */}
+              <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+                {messages.length === 0 && !isTyping && (
+                  <p className="text-xs text-slate-500 text-center mt-8">
+                    Say hi, share priorities, or ask for an update. {dev?.name?.split(' ')[0]} is ready.
+                  </p>
+                )}
+                {messages.map(m => {
+                  if (m.sender === 'system') {
+                    return (
+                      <div key={m.id} className="text-center">
+                        <span className="inline-block text-[10px] font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 px-2.5 py-1 rounded-full">
+                          {m.text}
+                        </span>
+                      </div>
+                    );
+                  }
+                  const isMe = m.sender === 'founder';
+                  return (
+                    <div key={m.id} className={`flex gap-2 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                      {m.authorAvatar ? (
+                        <img src={m.authorAvatar} alt={m.authorName} referrerPolicy="no-referrer" className="w-6 h-6 rounded-full object-cover shrink-0 mt-0.5" />
+                      ) : (
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] text-white shrink-0 mt-0.5 ${isMe ? 'bg-violet-600' : 'bg-slate-700'}`}>
+                          {m.authorName.slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <div className={`max-w-[78%] ${isMe ? 'items-end' : 'items-start'} flex flex-col`}>
+                        <div className={`text-xs leading-relaxed px-3 py-2 rounded-2xl ${
+                          isMe
+                            ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-tr-sm'
+                            : 'bg-slate-800/80 text-slate-100 border border-slate-700 rounded-tl-sm'
+                        }`}>
+                          {m.text}
+                        </div>
+                        <span className="text-[9px] text-slate-500 mt-0.5 font-mono">
+                          {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {isTyping && (
+                  <div className="flex gap-2 items-center">
+                    {dev?.avatar ? (
+                      <img src={dev.avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-slate-700" />
+                    )}
+                    <div className="bg-slate-800/80 border border-slate-700 rounded-2xl rounded-tl-sm px-3 py-2 flex gap-1">
+                      <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Composer */}
+              <form
+                onSubmit={(e) => { e.preventDefault(); sendChatMessage(job.id, chatInput); }}
+                className="border-t border-slate-800 p-3 bg-[#0B0F19]"
+              >
+                <div className="flex items-end gap-2 bg-slate-900 border border-slate-700 focus-within:border-violet-500/60 rounded-xl p-2">
+                  <textarea
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(job.id, chatInput); }
+                    }}
+                    rows={1}
+                    placeholder={`Message ${dev?.name?.split(' ')[0] ?? 'developer'}…`}
+                    className="flex-1 bg-transparent resize-none outline-none text-xs text-slate-100 placeholder-slate-500 px-1.5 py-1 max-h-32"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!chatInput.trim()}
+                    className="shrink-0 w-8 h-8 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-white transition active:scale-95"
+                    aria-label="Send message"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {canValidate(job) && (
+                  <button
+                    type="button"
+                    onClick={() => openValidationModal(job.id)}
+                    className="mt-2 w-full inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-emerald-600/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-600/20 text-[11px] font-semibold transition"
+                  >
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    <span>Validate job & release payment</span>
+                  </button>
+                )}
+              </form>
+            </aside>
+          </>
+        );
+      })()}
+
+      {/* ————————————————— VALIDATION MODAL ————————————————— */}
+      {(() => {
+        const job = validationJobId ? marketplaceJobs.find(j => j.id === validationJobId) : null;
+        if (!job) return null;
+        const steps = getJobSteps(job);
+        const allPassed = steps.every(s => validationCriteria[s.id]);
+
+        return (
+          <>
+            <div
+              className="fixed inset-0 z-[70] bg-slate-950/70 backdrop-blur-sm"
+              onClick={() => setValidationJobId(null)}
+            />
+            <div
+              role="dialog"
+              aria-label="Validate job"
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[71] w-[92%] max-w-md bg-[#0F1424] border border-slate-800 rounded-2xl shadow-2xl shadow-violet-950/40 p-5"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <span className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider">Validate & release</span>
+                  <h3 className="text-base font-bold text-white mt-0.5">{job.projectTitle}</h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Confirm each milestone meets your acceptance criteria. Approving releases ${job.budget} from escrow to {job.assignedDev}.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setValidationJobId(null)}
+                  className="text-slate-400 hover:text-white text-xl leading-none px-2"
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="space-y-2 mb-4 max-h-60 overflow-y-auto pr-1">
+                {steps.map((s, idx) => {
+                  const passed = !!validationCriteria[s.id];
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => setValidationCriteria(prev => ({ ...prev, [s.id]: !prev[s.id] }))}
+                      className={`w-full text-left flex items-start gap-3 px-3 py-2.5 rounded-lg border transition ${
+                        passed
+                          ? 'bg-emerald-500/10 border-emerald-500/30 hover:border-emerald-400/50'
+                          : 'bg-slate-900/60 border-slate-700 hover:border-slate-600'
+                      }`}
+                    >
+                      <span className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                        passed ? 'bg-emerald-500 border-emerald-400 text-white' : 'bg-slate-950 border-slate-600 text-transparent'
+                      }`}>
+                        ✓
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-slate-100">M{idx + 1}: {s.title}</div>
+                        <div className={`text-[10px] font-mono mt-0.5 ${passed ? 'text-emerald-400' : 'text-slate-500'}`}>
+                          {passed ? 'accepted' : 'tap to accept'}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Notes (optional)</label>
+              <textarea
+                value={validationNotes}
+                onChange={(e) => setValidationNotes(e.target.value)}
+                rows={3}
+                placeholder="Anything to flag, praise, or follow up on…"
+                className="w-full bg-slate-950/60 border border-slate-700 focus:border-violet-500/60 outline-none rounded-lg text-xs text-slate-100 placeholder-slate-500 px-3 py-2 resize-none"
+              />
+
+              <div className="flex flex-col sm:flex-row gap-2 mt-4">
+                <button
+                  onClick={() => submitValidation('changes_requested')}
+                  className="flex-1 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition"
+                >
+                  Request changes
+                </button>
+                <button
+                  onClick={() => submitValidation('approved')}
+                  disabled={!allPassed}
+                  className="flex-1 px-3 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition"
+                  title={allPassed ? 'Approve and release payment' : 'Accept every milestone to enable approval'}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Approve & release ${job.budget}
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
     </div>
   );

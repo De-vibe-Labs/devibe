@@ -9,6 +9,10 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+// Default to a real, currently-supported Gemini model. `gemini-3.5-flash` (the
+// previous value) does not exist and made every live call 404 into the mock.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
 app.use(express.json());
 
 // Lazy-initialize Gemini AI based on instruction
@@ -206,7 +210,7 @@ Make sure the React component returns valid Tailwind code and has proper formatt
 `;
 
     const response = await gemini.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: formattedPrompt,
       config: {
         responseMimeType: "application/json",
@@ -338,7 +342,7 @@ Make sure the React component returns valid Tailwind code and has proper formatt
 `;
 
     const response = await gemini.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: formattedPrompt,
       config: {
         responseMimeType: "application/json",

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { 
   Terminal, Cpu, Code2, Globe, Users2, Database, ShieldCheck, Play, 
   Sparkles, Layers, ArrowRight, CheckCircle2, ChevronRight, Bookmark, 
@@ -15,10 +15,18 @@ import {
 } from './data';
 import { useAuth } from './context/AuthContext';
 import { DevibeLogo } from './components/DevibeLogo';
-import { IDEPanel } from './components/IDEPanel';
-import { PrivyAuthButton } from './components/PrivyAuthButton';
-import { isPrivyConfigured } from './lib/privy-provider';
+
+// Lazy-load the IDE so Monaco + Sandpack (~1MB) are fetched only when the
+// user actually opens the IDE tab — keeps the initial paint cheap.
+const IDEPanel = lazy(() => import('./components/IDEPanel'));
 import { currentOrigin, firebaseAuthSettingsUrl } from './firebase';
+
+// Lazy — Privy SDK is heavy; only fetch when the user actually needs to sign in.
+const PrivyAuthButton = lazy(() =>
+  import('./components/PrivyAuthButton').then((m) => ({ default: m.PrivyAuthButton })),
+);
+const __viteEnv = ((import.meta as unknown as { env: Record<string, string | undefined> }).env) ?? {};
+const isPrivyConfigured = (): boolean => Boolean((__viteEnv.VITE_PRIVY_APP_ID || '').trim());
 import {
   getAttribution,
   getMyReferralCode,
@@ -1123,12 +1131,18 @@ export default function App() {
                     <span className="font-mono">or</span>
                     <span className="flex-1 h-px bg-slate-800" />
                   </div>
-                  <PrivyAuthButton
-                    onAuthenticated={({ id, email }) => {
-                      void trackReferralSignup({ userId: id });
-                      setPrivyIdentity({ id, email: email ?? null });
-                    }}
-                  />
+                  <Suspense
+                    fallback={
+                      <div className="w-full h-10 rounded-xl bg-slate-900 border border-slate-700 animate-pulse" />
+                    }
+                  >
+                    <PrivyAuthButton
+                      onAuthenticated={({ id, email }) => {
+                        void trackReferralSignup({ userId: id });
+                        setPrivyIdentity({ id, email: email ?? null });
+                      }}
+                    />
+                  </Suspense>
                 </>
               )}
 
@@ -2973,29 +2987,40 @@ export default function App() {
 
                       {/* TAB 0: LIVE INTERACTIVE PREVIEW & DESIGN REFLECTION GRID */}
                       {activeGenTab === 'ide' && (
-                        <IDEPanel
-                          initialCode={generatedApp.codeSnippets?.[0]?.code || '// Generated code will appear here.'}
-                          filename={generatedApp.codeSnippets?.[0]?.filename || (ideTemplate === 'expo' ? 'App.tsx (Expo)' : 'App.tsx')}
-                          chat={chatPayload}
-                          chatInput={refineInput}
-                          onChatInputChange={setRefineInput}
-                          onSubmitChat={() => executeRefineRequest()}
-                          isWorking={isRefining || isGenerating}
-                          onSaveSnapshot={saveIDESnapshot}
-                          onExportToGitHub={
-                            githubToken && selectedProject?.githubRepo ? exportIDECodeToGitHub : null
+                        <Suspense
+                          fallback={
+                            <div className="h-[640px] flex items-center justify-center text-xs text-slate-400 bg-slate-900/40 border border-slate-800 rounded-xl">
+                              <span className="inline-flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full border-2 border-slate-700 border-t-violet-500 animate-spin" />
+                                Loading IDE…
+                              </span>
+                            </div>
                           }
-                          exportLabel={
-                            !githubToken
-                              ? 'Connect GitHub first'
-                              : !selectedProject?.githubRepo
-                                ? 'Open a project with a linked repo to export'
-                                : undefined
-                          }
-                          isExporting={isExportingFromIDE}
-                          template={ideTemplate}
-                          onTemplateChange={setIdeTemplate}
-                        />
+                        >
+                          <IDEPanel
+                            initialCode={generatedApp.codeSnippets?.[0]?.code || '// Generated code will appear here.'}
+                            filename={generatedApp.codeSnippets?.[0]?.filename || (ideTemplate === 'expo' ? 'App.tsx (Expo)' : 'App.tsx')}
+                            chat={chatPayload}
+                            chatInput={refineInput}
+                            onChatInputChange={setRefineInput}
+                            onSubmitChat={() => executeRefineRequest()}
+                            isWorking={isRefining || isGenerating}
+                            onSaveSnapshot={saveIDESnapshot}
+                            onExportToGitHub={
+                              githubToken && selectedProject?.githubRepo ? exportIDECodeToGitHub : null
+                            }
+                            exportLabel={
+                              !githubToken
+                                ? 'Connect GitHub first'
+                                : !selectedProject?.githubRepo
+                                  ? 'Open a project with a linked repo to export'
+                                  : undefined
+                            }
+                            isExporting={isExportingFromIDE}
+                            template={ideTemplate}
+                            onTemplateChange={setIdeTemplate}
+                          />
+                        </Suspense>
                       )}
 
                       {activeGenTab === 'live_preview' && (

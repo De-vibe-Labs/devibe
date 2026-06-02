@@ -388,6 +388,34 @@ Make sure the React component returns valid Tailwind code and has proper formatt
   }
 });
 
+// ————————————————— Referral tracking —————————————————
+// In-memory ledger of attributed signups. Persist to a real store in prod.
+interface ReferralSignup { ref: string; userId: string; at: string; }
+const referralLedger: ReferralSignup[] = [];
+const seenReferralUsers = new Set<string>();
+
+app.post('/api/referral/track', (req, res) => {
+  const { ref, userId } = req.body ?? {};
+  if (typeof ref !== 'string' || typeof userId !== 'string' || !ref.trim() || !userId.trim()) {
+    return res.status(400).json({ error: 'ref and userId are required' });
+  }
+  const key = `${ref}:${userId}`;
+  if (seenReferralUsers.has(key)) return res.json({ ok: true, deduped: true });
+  seenReferralUsers.add(key);
+  const cleanRef = ref.trim().slice(0, 32).replace(/[^A-Za-z0-9_-]/g, '');
+  if (!cleanRef) return res.status(400).json({ error: 'invalid ref' });
+  referralLedger.push({ ref: cleanRef, userId, at: new Date().toISOString() });
+  console.log(`[referral] credited ${cleanRef} for signup ${userId}`);
+  return res.json({ ok: true });
+});
+
+app.get('/api/referral/stats/:code', (req, res) => {
+  const code = (req.params.code || '').trim();
+  if (!code) return res.status(400).json({ error: 'code required' });
+  const signups = referralLedger.filter(r => r.ref === code);
+  return res.json({ code, signups: signups.length, recent: signups.slice(-10).reverse() });
+});
+
 // GET /api/github/auth-url -> Generate oauth authorize URL
 app.get("/api/github/auth-url", (req, res) => {
   const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;

@@ -15,7 +15,8 @@ const PORT = 3000;
 // previous value) does not exist and made every live call 404 into the mock.
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
-app.use(express.json());
+// Bumped to 6MB so the escrow screenshot upload (~4MB cap) fits with overhead.
+app.use(express.json({ limit: '6mb' }));
 
 // Lazy-initialize Gemini AI based on instruction
 let aiClient: GoogleGenAI | null = null;
@@ -556,6 +557,118 @@ app.get('/api/billing/crypto-intent/:id', (req, res) => {
   const intent = cryptoIntents.get(req.params.id);
   if (!intent) return res.status(404).json({ error: 'intent not found' });
   return res.json(intent);
+});
+
+// ————————————————— Job escrow funding (founders → escrow) —————————————————
+// Three on-ramps; the chosen method dictates the verification path:
+//   stripe        → instant once Checkout returns success
+//   open-banking  → bank redirect; webhook would confirm in prod
+//   screenshot    → user uploads receipt; queued for manual review
+//
+// All three converge on the same `escrowLedger` record so the UI / job state
+// can react uniformly. Storage is in-memory — swap for a real store in prod.
+
+interface EscrowRecord {
+  jobId: string;
+  amountUsd: number;
+  method: 'stripe' | 'open-banking' | 'screenshot';
+  status: 'pending' | 'verifying' | 'funded' | 'rejected';
+  funderId: string | null;
+  evidence?: { kind: 'stripe_session' | 'bank_redirect' | 'screenshot'; ref: string };
+  createdAt: string;
+}
+const escrowLedger = new Map<string, EscrowRecord>();
+
+app.post('/api/billing/job-escrow/stripe', async (req, res) => {
+  const { jobId, amountUsd, userId, successUrl, cancelUrl } = req.body ?? {};
+  if (!jobId || !Number.isFinite(amountUsd) || amountUsd <= 0) {
+    return res.status(400).json({ error: 'jobId and positive amountUsd required' });
+  }
+  const stripe = getStripe();
+  if (!stripe) {
+    const record: EscrowRecord = {
+      jobId, amountUsd, method: 'stripe', status: 'funded', funderId: userId ?? null,
+      evidence: { kind: 'stripe_session', ref: `mock_${randomUUID().slice(0, 8)}` },
+      createdAt: new Date().toISOString(),
+    };
+    escrowLedger.set(jobId, record);
+    return res.json({ ...record, mock: true, url: `${successUrl || '/'}#mock_escrow_${jobId}` });
+  }
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          unit_amount: Math.round(amountUsd * 100),
+          product_data: { name: `Devibe escrow funding for job ${jobId}` },
+        },
+        quantity: 1,
+      }],
+      success_url: successUrl || `${process.env.APP_URL || ''}/?escrow_funded=${jobId}`,
+      cancel_url: cancelUrl || `${process.env.APP_URL || ''}/?escrow_cancelled=${jobId}`,
+      client_reference_id: userId || undefined,
+      metadata: { jobId, ...(userId ? { userId } : {}) },
+    });
+    const record: EscrowRecord = {
+      jobId, amountUsd, method: 'stripe', status: 'pending', funderId: userId ?? null,
+      evidence: { kind: 'stripe_session', ref: session.id },
+      createdAt: new Date().toISOString(),
+    };
+    escrowLedger.set(jobId, record);
+    return res.json({ ...record, url: session.url });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Stripe escrow failed' });
+  }
+});
+
+app.post('/api/billing/job-escrow/open-banking', (req, res) => {
+  const { jobId, amountUsd, userId } = req.body ?? {};
+  if (!jobId || !Number.isFinite(amountUsd) || amountUsd <= 0) {
+    return res.status(400).json({ error: 'jobId and positive amountUsd required' });
+  }
+  // Placeholder: real impl integrates Plaid / TrueLayer / GoCardless.
+  const reference = `OB-${randomUUID().slice(0, 8).toUpperCase()}`;
+  const record: EscrowRecord = {
+    jobId, amountUsd, method: 'open-banking', status: 'verifying', funderId: userId ?? null,
+    evidence: { kind: 'bank_redirect', ref: reference },
+    createdAt: new Date().toISOString(),
+  };
+  escrowLedger.set(jobId, record);
+  return res.json({
+    ...record,
+    redirectUrl: `https://example-open-banking.invalid/initiate?ref=${reference}&amount=${amountUsd}`,
+    instructions: 'Open Banking integration pending — set DEVIBE_OPEN_BANKING_PROVIDER to enable Plaid/TrueLayer/GoCardless. This response is a placeholder.',
+  });
+});
+
+app.post('/api/billing/job-escrow/screenshot', (req, res) => {
+  const { jobId, amountUsd, userId, screenshotDataUrl, note } = req.body ?? {};
+  if (!jobId || !Number.isFinite(amountUsd) || amountUsd <= 0) {
+    return res.status(400).json({ error: 'jobId and positive amountUsd required' });
+  }
+  if (typeof screenshotDataUrl !== 'string' || !screenshotDataUrl.startsWith('data:image/')) {
+    return res.status(400).json({ error: 'screenshotDataUrl (data:image/*) required' });
+  }
+  // Stored in-memory; cap size to avoid OOM in this demo backend.
+  if (screenshotDataUrl.length > 4 * 1024 * 1024) {
+    return res.status(413).json({ error: 'screenshot too large (max ~4MB)' });
+  }
+  const ref = `SS-${randomUUID().slice(0, 8).toUpperCase()}`;
+  const record: EscrowRecord = {
+    jobId, amountUsd, method: 'screenshot', status: 'verifying', funderId: userId ?? null,
+    evidence: { kind: 'screenshot', ref },
+    createdAt: new Date().toISOString(),
+  };
+  escrowLedger.set(jobId, record);
+  console.log(`[escrow] screenshot received for ${jobId} (ref=${ref}, ${(screenshotDataUrl.length/1024).toFixed(0)}KB)${note ? ` note: ${note}` : ''}`);
+  return res.json({ ...record, queuedForReview: true });
+});
+
+app.get('/api/billing/job-escrow/:jobId', (req, res) => {
+  const rec = escrowLedger.get(req.params.jobId);
+  if (!rec) return res.status(404).json({ error: 'no escrow record' });
+  return res.json(rec);
 });
 
 // GET /api/github/auth-url -> Generate oauth authorize URL

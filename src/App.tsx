@@ -22,6 +22,9 @@ const IDEPanel = lazy(() => import('./components/IDEPanel'));
 
 // Lazy — Stripe + viem ship behind the pricing tab so they don't bloat first paint.
 const BillingPanel = lazy(() => import('./components/BillingPanel'));
+
+// Lazy — opens only when a founder funds an escrow.
+const JobFundingModal = lazy(() => import('./components/JobFundingModal'));
 import { currentOrigin, firebaseAuthSettingsUrl } from './firebase';
 
 // Lazy — Privy SDK is heavy; only fetch when the user actually needs to sign in.
@@ -106,6 +109,9 @@ export default function App() {
   // IDE state
   const [ideTemplate, setIdeTemplate] = useState<'web' | 'expo'>('web');
   const [isExportingFromIDE, setIsExportingFromIDE] = useState(false);
+
+  // Job-funding modal — set to a job id when the founder clicks "Fund escrow".
+  const [fundingJobId, setFundingJobId] = useState<string | null>(null);
 
   // Alternative identity (Privy). Tracked separately from Firebase user.
   const [privyIdentity, setPrivyIdentity] = useState<{ id: string; email: string | null } | null>(null);
@@ -2680,9 +2686,100 @@ export default function App() {
           <div className="lg:col-span-3 space-y-6">
             
             {/* 1. DASHBOARD OVERVIEW HOME TAB */}
-            {dashTab === 'home' && (
+            {dashTab === 'home' && userRole === 'developer' && (
               <div className="space-y-6">
-                
+                {(() => {
+                  const myName = user?.displayName || privyIdentity?.email || 'Developer';
+                  const myJobs = marketplaceJobs.filter(j => j.assignedDev && j.status !== 'open');
+                  const completed = marketplaceJobs.filter(j => j.status === 'completed');
+                  const inProgress = myJobs.filter(j => j.status !== 'completed');
+                  const earnings = completed.reduce((sum, j) => sum + (j.budget || 0), 0);
+                  const escrowed = inProgress.filter(j => j.status === 'escrow').reduce((sum, j) => sum + (j.budget || 0), 0);
+
+                  return (
+                    <>
+                      <div className="p-6 bg-gradient-to-r from-cyan-950/40 via-slate-950/40 to-violet-950/40 border border-cyan-500/20 rounded-2xl">
+                        <span className="text-[10px] font-mono text-cyan-400 uppercase tracking-wider">Developer dashboard</span>
+                        <h1 className="font-display text-2xl font-extrabold text-white mt-1">Welcome back, {myName.split(' ')[0]}.</h1>
+                        <p className="text-xs text-slate-400 mt-1">Pick up jobs, validate milestones, and track payouts.</p>
+                        <div className="grid grid-cols-3 gap-3 mt-4">
+                          <div className="bg-slate-950/60 border border-violet-500/20 rounded-lg p-3">
+                            <div className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">In progress</div>
+                            <div className="text-lg font-bold text-violet-300 mt-0.5">{inProgress.length}</div>
+                          </div>
+                          <div className="bg-slate-950/60 border border-cyan-500/20 rounded-lg p-3">
+                            <div className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">In escrow</div>
+                            <div className="text-lg font-bold text-cyan-300 mt-0.5">${escrowed.toLocaleString()}</div>
+                          </div>
+                          <div className="bg-slate-950/60 border border-emerald-500/20 rounded-lg p-3">
+                            <div className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">Lifetime earnings</div>
+                            <div className="text-lg font-bold text-emerald-300 mt-0.5">${earnings.toLocaleString()}</div>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-4">
+                          <button onClick={() => setDashTab('marketplace')} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-semibold">
+                            <Briefcase className="w-3.5 h-3.5" /> Browse marketplace
+                          </button>
+                          <button onClick={() => updateUserRole('founder')} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium">
+                            Switch to founder view
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <h2 className="text-sm font-bold text-white uppercase tracking-wider font-display mb-2">Jobs assigned to you</h2>
+                        {inProgress.length === 0 ? (
+                          <div className="text-[11px] text-slate-400 bg-slate-900/40 border border-slate-800 rounded-xl p-4 text-center">
+                            No active jobs yet. Head to the marketplace to claim one.
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {inProgress.map(j => (
+                              <div key={j.id} className="p-3 bg-slate-900/60 border border-slate-800 rounded-lg flex items-center justify-between">
+                                <div className="min-w-0">
+                                  <p className="text-xs font-semibold text-white truncate">{j.projectTitle}</p>
+                                  <p className="text-[10px] font-mono text-slate-500">STATUS: <span className="text-violet-400 font-semibold">{j.status.toUpperCase()}</span></p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-emerald-400">${j.budget}</span>
+                                  <button onClick={() => openChat(j.id)} className="px-2 py-1 text-[10px] bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded">
+                                    Chat
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
+            {dashTab === 'home' && userRole === 'founder' && (
+              <div className="space-y-6">
+
+                {/* Founder hero: chat-first + find devs */}
+                <div className="p-5 bg-gradient-to-br from-violet-950/40 to-slate-950/40 border border-violet-500/20 rounded-2xl flex flex-col md:flex-row items-start md:items-center gap-4">
+                  <div className="flex-1">
+                    <span className="text-[10px] font-mono text-violet-400 uppercase tracking-wider">Founder workspace</span>
+                    <h2 className="font-display text-xl font-extrabold text-white mt-1">Describe what you're building — Devibe handles the rest.</h2>
+                    <p className="text-xs text-slate-400 mt-1">Chat to generate the app, open the live IDE, then route the rest to vetted devs.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 shrink-0">
+                    <button onClick={returnToChat} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-semibold">
+                      <MessageSquare className="w-3.5 h-3.5" /> Open chat
+                    </button>
+                    <button onClick={() => setDashTab('marketplace')} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold">
+                      <Briefcase className="w-3.5 h-3.5 text-cyan-400" /> Find developers
+                    </button>
+                    <button onClick={() => updateUserRole('developer')} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800/60 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-white text-xs font-medium">
+                      Switch to developer view
+                    </button>
+                  </div>
+                </div>
+
                 {/* BRAND INTRO JUMBOTRON & AUTH CALLOUT */}
                 <div className="p-6 bg-gradient-to-r from-[#171330] via-[#0E1529] to-[#0A0D1A] border border-violet-500/20 rounded-2xl relative overflow-hidden">
                   <div className="absolute top-0 right-0 p-4">
@@ -3924,13 +4021,11 @@ export default function App() {
                             </button>
                           ) : job.status === 'assigned' ? (
                             <button
-                              onClick={() => {
-                                const updated = marketplaceJobs.map(j => j.id === job.id ? { ...j, status: 'escrow' as const } : j);
-                                saveJobsToStorage(updated);
-                              }}
-                              className="px-3 py-1 bg-violet-600 hover:bg-violet-500 text-white rounded text-xs font-semibold"
+                              onClick={() => setFundingJobId(job.id)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1 bg-violet-600 hover:bg-violet-500 text-white rounded text-xs font-semibold"
                             >
-                              Deposit Budget in Escrow Container
+                              <DollarSign className="w-3.5 h-3.5" />
+                              <span>Fund escrow (3 ways)</span>
                             </button>
                           ) : job.status === 'escrow' ? (
                             canValidate(job) ? (
@@ -4293,6 +4388,33 @@ export default function App() {
               </form>
             </aside>
           </>
+        );
+      })()}
+
+      {/* ————————————————— JOB FUNDING MODAL ————————————————— */}
+      {fundingJobId && (() => {
+        const job = marketplaceJobs.find(j => j.id === fundingJobId);
+        if (!job) return null;
+        return (
+          <Suspense fallback={null}>
+            <JobFundingModal
+              jobId={job.id}
+              amountUsd={job.budget}
+              userId={user?.uid || privyIdentity?.id || null}
+              onClose={() => setFundingJobId(null)}
+              onFunded={(result) => {
+                // Move the job into escrow once any method reports a non-pending status.
+                const nowFunded = result.status === 'funded';
+                const verifying = result.status === 'verifying' || result.status === 'pending';
+                if (nowFunded || verifying) {
+                  const updated = marketplaceJobs.map(j =>
+                    j.id === job.id ? { ...j, status: nowFunded ? 'escrow' as const : j.status } : j,
+                  );
+                  saveJobsToStorage(updated);
+                }
+              }}
+            />
+          </Suspense>
         );
       })()}
 
